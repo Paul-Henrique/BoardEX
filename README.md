@@ -78,7 +78,15 @@ Os pinos e nails são coloridos pelo nome da net:
 | 1,8 V | Azul |
 | 1 V | Branco |
 
-São reconhecidos formatos como `+12V`, `12V0`, `+5V`, `5V0`, `+3V3`, `3.3V`, `+1V8`, `1.8V`, `+1V` e `1V0`. Nets sem tensão reconhecida continuam usando a cor do lado do pino. A legenda também aparece no painel de detalhes.
+São reconhecidos formatos como `+12V`, `12V0`, `+5V`, `5V0`, `+3V3`, `3.3V`, `+1V8`, `1.8V`, `+1V` e `1V0`. Nets sem tensão reconhecida continuam usando a cor do lado do pino. A legenda também aparece no painel de detalhes. Ao destacar uma net, os pinos e nails dela mudam para **verde escuro**, evitando confusão com o amarelo de 12–20 V.
+
+### Dados do componente
+
+![BoardEX com o componente J1 selecionado, painel de dados e net +12V destacada em verde escuro](docs/screenshot-component.png)
+
+Ao clicar em um componente, o painel mostra o tipo inferido pelo designador — capacitor, resistor, indutor/bobina, transistor/MOSFET, diodo/LED, chip/CI, cristal/oscilador, fusível, bateria, conector, chave, jumper, relé e outros — além da montagem, lado, dimensões, quantidade de pinos, valor, código do fabricante e nets conectadas.
+
+A classificação é heurística, baseada em prefixos como `C`, `R`, `L`, `Q`, `D`, `U`, `Y`, `F`, `BT`, `J` e `SW`, e em nomes descritivos. O tipo exato de um transistor, por exemplo, depende do valor/código do componente quando o arquivo não o informa.
 
 ### Limitações conhecidas
 

@@ -28,7 +28,8 @@ const VOLT_5: Color32 = Color32::from_rgb(235, 64, 64);
 const VOLT_3V3: Color32 = Color32::from_rgb(190, 90, 255);
 const VOLT_1V8: Color32 = Color32::from_rgb(52, 152, 235);
 const VOLT_1V: Color32 = Color32::from_rgb(245, 245, 245);
-const NET_HIGHLIGHT: Color32 = Color32::from_rgb(255, 214, 82);
+const NET_HIGHLIGHT: Color32 = Color32::from_rgb(46, 160, 88);
+const PART_SELECT: Color32 = Color32::from_rgb(125, 225, 255);
 const TEXT: Color32 = Color32::from_rgb(224, 230, 238);
 const MUTED: Color32 = Color32::from_rgb(139, 151, 166);
 const ACCENT: Color32 = Color32::from_rgb(68, 170, 255);
@@ -174,6 +175,146 @@ fn pin_color(net: &str, side: Side) -> Color32 {
     classify_net_voltage(net)
         .map(VoltageRail::color)
         .unwrap_or_else(|| side_color(side))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ComponentType {
+    Capacitor,
+    Resistor,
+    Inductor,
+    Transistor,
+    Mosfet,
+    TransistorMosfet,
+    Diode,
+    Led,
+    Ic,
+    CrystalOscillator,
+    Fuse,
+    Battery,
+    Connector,
+    Switch,
+    Jumper,
+    Relay,
+    Speaker,
+    Antenna,
+    TestPoint,
+    Motor,
+    Other,
+}
+
+impl ComponentType {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Capacitor => "Capacitor",
+            Self::Resistor => "Resistor",
+            Self::Inductor => "Indutor / bobina",
+            Self::Transistor => "Transistor",
+            Self::Mosfet => "MOSFET",
+            Self::TransistorMosfet => "Transistor / MOSFET",
+            Self::Diode => "Diodo",
+            Self::Led => "LED",
+            Self::Ic => "Chip / CI",
+            Self::CrystalOscillator => "Cristal / oscilador",
+            Self::Fuse => "Fusível",
+            Self::Battery => "Bateria",
+            Self::Connector => "Conector",
+            Self::Switch => "Chave / botão",
+            Self::Jumper => "Jumper",
+            Self::Relay => "Relé",
+            Self::Speaker => "Alto-falante / buzzer",
+            Self::Antenna => "Antena",
+            Self::TestPoint => "Ponto de teste",
+            Self::Motor => "Motor",
+            Self::Other => "Outro / não identificado",
+        }
+    }
+}
+
+/// Classifica o componente pelo designador (C1, R2, Q3, U4...) e, se necessário,
+/// por palavras no nome. É uma heurística: boardviews nem sempre trazem o tipo.
+fn classify_component(name: &str) -> ComponentType {
+    let clean = name
+        .trim()
+        .trim_start_matches(|c: char| !c.is_ascii_alphanumeric())
+        .to_ascii_uppercase();
+    let prefix: String = clean
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect();
+
+    let mapped = match prefix.as_str() {
+        "C" | "CAP" | "CAPACITOR" => Some(ComponentType::Capacitor),
+        "R" | "RES" | "RESISTOR" | "RESISTENCIA" | "RN" => Some(ComponentType::Resistor),
+        "L" | "IND" | "INDUCTOR" | "BOBINA" | "FB" | "FERRITE" => Some(ComponentType::Inductor),
+        "T" | "TR" | "TRANS" | "TRANSISTOR" => Some(ComponentType::Transistor),
+        "MOS" | "MOSFET" | "FET" => Some(ComponentType::Mosfet),
+        "Q" => Some(ComponentType::TransistorMosfet),
+        "D" | "DIODE" | "DIODO" => Some(ComponentType::Diode),
+        "LED" => Some(ComponentType::Led),
+        "U" | "IC" | "CI" | "CHIP" | "MCU" | "CPU" | "GPU" | "PCH" | "EC" | "PMIC" => {
+            Some(ComponentType::Ic)
+        }
+        "Y" | "X" | "XTAL" | "CRYSTAL" | "CRISTAL" | "OSC" | "OSCILLATOR" | "OSCILADOR" | "XO" => {
+            Some(ComponentType::CrystalOscillator)
+        }
+        "F" | "FUSE" | "FUSIVEL" => Some(ComponentType::Fuse),
+        "BT" | "BAT" | "BATT" | "BATTERY" | "BATERIA" => Some(ComponentType::Battery),
+        "J" | "CN" | "CON" | "CONN" | "CONNECTOR" | "CONECTOR" | "HEADER" | "SOCKET" | "P"
+        | "PLUG" => Some(ComponentType::Connector),
+        "SW" | "S" | "SWITCH" | "BUTTON" | "BOTAO" => Some(ComponentType::Switch),
+        "JP" | "JMP" | "JUMPER" => Some(ComponentType::Jumper),
+        "K" | "RELAY" | "RELE" => Some(ComponentType::Relay),
+        "LS" | "SPK" | "SPEAKER" | "BUZZER" | "ALTOFALANTE" => Some(ComponentType::Speaker),
+        "ANT" | "ANTENNA" | "ANTENA" => Some(ComponentType::Antenna),
+        "TP" | "TEST" | "TESTPOINT" => Some(ComponentType::TestPoint),
+        "M" | "MOTOR" => Some(ComponentType::Motor),
+        _ => None,
+    };
+    if let Some(component) = mapped {
+        return component;
+    }
+
+    let keywords = [
+        ("CAPACITOR", ComponentType::Capacitor),
+        ("RESISTOR", ComponentType::Resistor),
+        ("INDUCTOR", ComponentType::Inductor),
+        ("BOBINA", ComponentType::Inductor),
+        ("TRANSISTOR", ComponentType::Transistor),
+        ("MOSFET", ComponentType::Mosfet),
+        ("DIODE", ComponentType::Diode),
+        ("DIODO", ComponentType::Diode),
+        ("LED", ComponentType::Led),
+        ("CHIP", ComponentType::Ic),
+        ("CRYSTAL", ComponentType::CrystalOscillator),
+        ("CRISTAL", ComponentType::CrystalOscillator),
+        ("OSCILLATOR", ComponentType::CrystalOscillator),
+        ("OSCILADOR", ComponentType::CrystalOscillator),
+        ("FUSE", ComponentType::Fuse),
+        ("FUSIVEL", ComponentType::Fuse),
+        ("BATTERY", ComponentType::Battery),
+        ("BATERIA", ComponentType::Battery),
+        ("CONNECTOR", ComponentType::Connector),
+        ("CONECTOR", ComponentType::Connector),
+        ("SWITCH", ComponentType::Switch),
+        ("BUTTON", ComponentType::Switch),
+        ("BOTAO", ComponentType::Switch),
+        ("JUMPER", ComponentType::Jumper),
+        ("RELAY", ComponentType::Relay),
+        ("RELE", ComponentType::Relay),
+        ("SPEAKER", ComponentType::Speaker),
+        ("BUZZER", ComponentType::Speaker),
+        ("ANTENNA", ComponentType::Antenna),
+        ("ANTENA", ComponentType::Antenna),
+        ("TESTPOINT", ComponentType::TestPoint),
+        ("MOTOR", ComponentType::Motor),
+    ];
+    for (needle, component) in keywords {
+        if clean.contains(needle) {
+            return component;
+        }
+    }
+
+    ComponentType::Other
 }
 
 #[derive(Clone, Debug)]
@@ -351,7 +492,8 @@ impl BoardExApp {
                     hit: Hit::Part(idx),
                     label: format!("{}  ·  {}", part.name, part.side.label()),
                     detail: format!(
-                        "{} · {} pino(s){}",
+                        "{} · {} · {} pino(s){}",
+                        classify_component(&part.name).label(),
                         part.kind.label(),
                         part.pins.len(),
                         if part.value.is_empty() {
@@ -765,7 +907,7 @@ impl BoardExApp {
                 CornerRadius::ZERO,
                 Stroke::new(
                     if selected { 2.0 } else { 1.0 },
-                    if selected { NET_HIGHLIGHT } else { stroke },
+                    if selected { PART_SELECT } else { stroke },
                 ),
                 StrokeKind::Inside,
             );
@@ -1249,20 +1391,53 @@ impl BoardExApp {
                 && let Some(part) = board.parts.get(idx)
             {
                 ui.separator();
-                ui.heading("Componente");
+                ui.heading("Componente selecionado");
                 ui.label(egui::RichText::new(&part.name).strong().size(17.0));
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Tipo: {}",
+                        classify_component(&part.name).label()
+                    ))
+                    .strong()
+                    .color(ACCENT),
+                );
                 ui.label(format!(
-                    "{} · lado {} · {} pino(s)",
+                    "Montagem: {} · lado {} · {} pino(s)",
                     part.kind.label(),
                     part.side.label(),
                     part.pins.len()
                 ));
+                if part.has_rect() {
+                    let width = (part.p2.x - part.p1.x).abs();
+                    let height = (part.p2.y - part.p1.y).abs();
+                    ui.label(format!("Dimensões: {width:.1} × {height:.1} mil"));
+                }
                 if !part.value.is_empty() {
-                    ui.label(format!("valor: {}", part.value));
+                    ui.label(format!("Valor: {}", part.value));
                 }
                 if !part.mfgcode.is_empty() {
-                    ui.label(format!("fabricante: {}", part.mfgcode));
+                    ui.label(format!("Código do fabricante: {}", part.mfgcode));
                 }
+
+                let mut nets: Vec<&str> = part
+                    .pins
+                    .iter()
+                    .filter_map(|pin_idx| board.pins.get(*pin_idx))
+                    .map(|pin| pin.net.as_str())
+                    .filter(|net| !net.is_empty())
+                    .collect();
+                nets.sort_unstable();
+                nets.dedup();
+                if !nets.is_empty() {
+                    let preview = nets.iter().take(6).copied().collect::<Vec<_>>().join(", ");
+                    let text = if nets.len() > 6 {
+                        format!("Nets ({}): {preview}, …", nets.len())
+                    } else {
+                        format!("Nets ({}): {preview}", nets.len())
+                    };
+                    ui.label(text).on_hover_text(nets.join("\n"));
+                }
+
                 if ui.button("Enquadrar componente").clicked() {
                     go_to = Some(part.bounds);
                 }
@@ -1492,5 +1667,63 @@ mod tests {
         assert_eq!(pin_color("GND", Side::Top), PIN_TOP);
         assert_eq!(pin_color("", Side::Bottom), PIN_BOTTOM);
         assert_eq!(pin_color("SIGNAL", Side::Both), PIN_BOTH);
+    }
+
+    #[test]
+    fn classifies_component_types_by_designator() {
+        let cases = [
+            ("C1", ComponentType::Capacitor),
+            ("c12", ComponentType::Capacitor),
+            ("CAP2", ComponentType::Capacitor),
+            ("CAPACITOR1", ComponentType::Capacitor),
+            ("R1", ComponentType::Resistor),
+            ("#R5", ComponentType::Resistor),
+            ("RN1", ComponentType::Resistor),
+            ("RESISTOR1", ComponentType::Resistor),
+            ("L1", ComponentType::Inductor),
+            ("FB1", ComponentType::Inductor),
+            ("BOBINA1", ComponentType::Inductor),
+            ("Q1", ComponentType::TransistorMosfet),
+            ("T1", ComponentType::Transistor),
+            ("TR2", ComponentType::Transistor),
+            ("TRANSISTOR1", ComponentType::Transistor),
+            ("MOS1", ComponentType::Mosfet),
+            ("FET2", ComponentType::Mosfet),
+            ("MOSFET1", ComponentType::Mosfet),
+            ("D1", ComponentType::Diode),
+            ("DIODO1", ComponentType::Diode),
+            ("LED1", ComponentType::Led),
+            ("U1", ComponentType::Ic),
+            ("IC1", ComponentType::Ic),
+            ("CI1", ComponentType::Ic),
+            ("CHIP1", ComponentType::Ic),
+            ("Y1", ComponentType::CrystalOscillator),
+            ("X1", ComponentType::CrystalOscillator),
+            ("OSC1", ComponentType::CrystalOscillator),
+            ("CRISTAL1", ComponentType::CrystalOscillator),
+            ("F1", ComponentType::Fuse),
+            ("FUSIVEL1", ComponentType::Fuse),
+            ("BT1", ComponentType::Battery),
+            ("BATERIA1", ComponentType::Battery),
+            ("J1", ComponentType::Connector),
+            ("P1", ComponentType::Connector),
+            ("CONECTOR1", ComponentType::Connector),
+            ("SW1", ComponentType::Switch),
+            ("S1", ComponentType::Switch),
+            ("BOTAO1", ComponentType::Switch),
+            ("JP1", ComponentType::Jumper),
+            ("K1", ComponentType::Relay),
+            ("RELE1", ComponentType::Relay),
+            ("LS1", ComponentType::Speaker),
+            ("BUZZER1", ComponentType::Speaker),
+            ("ANT1", ComponentType::Antenna),
+            ("TP1", ComponentType::TestPoint),
+            ("M1", ComponentType::Motor),
+            ("UNKNOWN", ComponentType::Other),
+        ];
+
+        for (name, expected) in cases {
+            assert_eq!(classify_component(name), expected, "componente: {name}");
+        }
     }
 }

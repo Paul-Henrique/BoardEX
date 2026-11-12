@@ -4,7 +4,7 @@ Visualizador de **boardview** desktop, leve e independente, escrito em Rust com 
 
 Repositório: <https://github.com/Paul-Henrique/BoardEX>
 
-![BoardEX exibindo uma placa BRD2 sintética com contorno, componentes, pinos e nails](docs/screenshot.png)
+![BoardEX exibindo uma placa BRD2 sintética com pinos coloridos por tensão](docs/screenshot.png)
 
 > Implementação **clean-room**. Nenhum código, binário, ícone ou ativo do FlexBV é usado. O OpenBoardView (MIT) foi consultado apenas como documentação factual dos formatos de arquivo. Os parsers deste projeto foram escritos em Rust.
 
@@ -65,6 +65,20 @@ BoardEX --fz-key-file obv.conf placa.fz
 O caminho RC6 é coberto por um fixture sintético gerado com uma implementação independente. Também foi testada uma amostra ASUS real: o contêiner é RC6 e só abre com a chave correspondente; sem ela o BoardEX informa que a chave é necessária. Arquivos `.fz` sem cifra abrem automaticamente.
 
 Também é possível passar a pasta do pacote em vez do arquivo, por exemplo uma pasta com o nome terminando em `.fz` que contém o `.fz` real. O BoardEX procura recursivamente até 4 níveis e usa o arquivo quando há exatamente um `.fz`; se houver vários, pede que um seja escolhido.
+
+### Cores dos pinos por tensão
+
+Os pinos e nails são coloridos pelo nome da net:
+
+| Tensão | Cor |
+|---|---|
+| 12 V a 20 V | Amarelo |
+| 5 V | Vermelho |
+| 3,3 V | Roxo |
+| 1,8 V | Azul |
+| 1 V | Branco |
+
+São reconhecidos formatos como `+12V`, `12V0`, `+5V`, `5V0`, `+3V3`, `3.3V`, `+1V8`, `1.8V`, `+1V` e `1V0`. Nets sem tensão reconhecida continuam usando a cor do lado do pino. A legenda também aparece no painel de detalhes.
 
 ### Limitações conhecidas
 

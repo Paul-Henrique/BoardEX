@@ -23,6 +23,11 @@ const PART_BOTH_STROKE: Color32 = Color32::from_rgb(104, 148, 112);
 const PIN_TOP: Color32 = Color32::from_rgb(235, 112, 92);
 const PIN_BOTTOM: Color32 = Color32::from_rgb(84, 166, 235);
 const PIN_BOTH: Color32 = Color32::from_rgb(120, 199, 132);
+const VOLT_12_20: Color32 = Color32::from_rgb(255, 214, 64);
+const VOLT_5: Color32 = Color32::from_rgb(235, 64, 64);
+const VOLT_3V3: Color32 = Color32::from_rgb(190, 90, 255);
+const VOLT_1V8: Color32 = Color32::from_rgb(52, 152, 235);
+const VOLT_1V: Color32 = Color32::from_rgb(245, 245, 245);
 const NET_HIGHLIGHT: Color32 = Color32::from_rgb(255, 214, 82);
 const TEXT: Color32 = Color32::from_rgb(224, 230, 238);
 const MUTED: Color32 = Color32::from_rgb(139, 151, 166);
@@ -43,6 +48,132 @@ impl ViewSide {
             Self::Both => Side::Both,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VoltageRail {
+    V12to20,
+    V5,
+    V3V3,
+    V1V8,
+    V1,
+}
+
+impl VoltageRail {
+    fn color(self) -> Color32 {
+        match self {
+            Self::V12to20 => VOLT_12_20,
+            Self::V5 => VOLT_5,
+            Self::V3V3 => VOLT_3V3,
+            Self::V1V8 => VOLT_1V8,
+            Self::V1 => VOLT_1V,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::V12to20 => "12–20 V",
+            Self::V5 => "5 V",
+            Self::V3V3 => "3,3 V",
+            Self::V1V8 => "1,8 V",
+            Self::V1 => "1 V",
+        }
+    }
+}
+
+const VOLTAGE_RAILS: [VoltageRail; 5] = [
+    VoltageRail::V12to20,
+    VoltageRail::V5,
+    VoltageRail::V3V3,
+    VoltageRail::V1V8,
+    VoltageRail::V1,
+];
+
+fn rail_for_voltage(voltage: f32) -> Option<VoltageRail> {
+    if (12.0..=20.0).contains(&voltage) {
+        Some(VoltageRail::V12to20)
+    } else if (voltage - 5.0).abs() <= 0.051 {
+        Some(VoltageRail::V5)
+    } else if (voltage - 3.3).abs() <= 0.051 {
+        Some(VoltageRail::V3V3)
+    } else if (voltage - 1.8).abs() <= 0.051 {
+        Some(VoltageRail::V1V8)
+    } else if (voltage - 1.0).abs() <= 0.051 {
+        Some(VoltageRail::V1)
+    } else {
+        None
+    }
+}
+
+/// Reconhece tensões em nomes de net como `+12V`, `+5V0`, `3V3_S5`,
+/// `VCC1V8`, `PP1V0` e `3.3V`. Nomes sem tensão explícita retornam `None`.
+fn classify_net_voltage(net: &str) -> Option<VoltageRail> {
+    let text = net.to_ascii_uppercase();
+    let bytes = text.as_bytes();
+
+    for (i, &byte) in bytes.iter().enumerate() {
+        if byte != b'V' {
+            continue;
+        }
+
+        let mut whole_end = i;
+        while whole_end > 0 && bytes[whole_end - 1].is_ascii_whitespace() {
+            whole_end -= 1;
+        }
+
+        let mut whole_start = whole_end;
+        while whole_start > 0
+            && (bytes[whole_start - 1].is_ascii_digit()
+                || bytes[whole_start - 1] == b'.'
+                || bytes[whole_start - 1] == b',')
+        {
+            whole_start -= 1;
+        }
+        if whole_start == whole_end {
+            continue;
+        }
+
+        let whole_text = text[whole_start..whole_end].replace(',', ".");
+        let Ok(whole) = whole_text.parse::<f32>() else {
+            continue;
+        };
+
+        let mut fraction_end = i + 1;
+        while fraction_end < bytes.len() && bytes[fraction_end].is_ascii_digit() {
+            fraction_end += 1;
+        }
+
+        let voltage = if fraction_end == i + 1 {
+            whole
+        } else {
+            let fraction_text = &text[i + 1..fraction_end];
+            let Ok(fraction) = fraction_text.parse::<f32>() else {
+                continue;
+            };
+            let scale = 10f32.powi((fraction_end - i - 1) as i32);
+            whole + fraction / scale
+        };
+
+        if let Some(rail) = rail_for_voltage(voltage) {
+            return Some(rail);
+        }
+    }
+
+    None
+}
+
+fn side_color(side: Side) -> Color32 {
+    match side {
+        Side::Top => PIN_TOP,
+        Side::Bottom => PIN_BOTTOM,
+        Side::Both => PIN_BOTH,
+    }
+}
+
+fn pin_color(net: &str, side: Side) -> Color32 {
+    classify_net_voltage(net)
+        .map(VoltageRail::color)
+        .unwrap_or_else(|| side_color(side))
 }
 
 #[derive(Clone, Debug)]
@@ -666,11 +797,7 @@ impl BoardExApp {
             let color = if highlighted {
                 NET_HIGHLIGHT
             } else {
-                match nail.side {
-                    Side::Top => PIN_TOP,
-                    Side::Bottom => PIN_BOTTOM,
-                    Side::Both => PIN_BOTH,
-                }
+                pin_color(&nail.net, nail.side)
             };
             let size = if highlighted { 7.0 } else { 5.0 };
             let r = Rect::from_center_size(sp, Vec2::splat(size));
@@ -703,16 +830,10 @@ impl BoardExApp {
                     if highlighted || self.selected_pin == Some(idx) {
                         radius += 1.2;
                     }
-                    let color = if self.selected_pin == Some(idx) {
-                        Color32::WHITE
-                    } else if highlighted {
+                    let color = if highlighted && self.selected_pin != Some(idx) {
                         NET_HIGHLIGHT
                     } else {
-                        match pin.side {
-                            Side::Top => PIN_TOP,
-                            Side::Bottom => PIN_BOTTOM,
-                            Side::Both => PIN_BOTH,
-                        }
+                        pin_color(&pin.net, pin.side)
                     };
                     painter.circle_filled(sp, radius, color);
                     painter.circle_stroke(
@@ -1085,6 +1206,17 @@ impl BoardExApp {
                 );
             }
 
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(egui::RichText::new("Tensões:").color(MUTED).small());
+                for rail in VOLTAGE_RAILS {
+                    ui.label(egui::RichText::new("●").size(14.0).color(rail.color()));
+                    ui.label(egui::RichText::new(rail.label()).color(MUTED).small());
+                    ui.add_space(2.0);
+                }
+            });
+            ui.add_space(4.0);
+
             if !board.warnings.is_empty() {
                 ui.collapsing(format!("Avisos ({})", board.warnings.len()), |ui| {
                     for warning in &board.warnings {
@@ -1306,4 +1438,59 @@ fn configure_style(ctx: &egui::Context) {
         style.spacing.item_spacing = Vec2::new(8.0, 6.0);
         style.spacing.button_padding = Vec2::new(8.0, 4.0);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_voltage_rails() {
+        let cases = [
+            ("+12V", Some(VoltageRail::V12to20)),
+            ("12V0", Some(VoltageRail::V12to20)),
+            ("+12V5", Some(VoltageRail::V12to20)),
+            ("+15V", Some(VoltageRail::V12to20)),
+            ("+19.5V", Some(VoltageRail::V12to20)),
+            ("+20V", Some(VoltageRail::V12to20)),
+            ("VCC12V0", Some(VoltageRail::V12to20)),
+            ("+5V", Some(VoltageRail::V5)),
+            ("5V0", Some(VoltageRail::V5)),
+            ("VCC5V0", Some(VoltageRail::V5)),
+            ("PP5V_USB", Some(VoltageRail::V5)),
+            ("+3V3", Some(VoltageRail::V3V3)),
+            ("3.3V", Some(VoltageRail::V3V3)),
+            ("3,3V", Some(VoltageRail::V3V3)),
+            ("VCC3V3", Some(VoltageRail::V3V3)),
+            ("PP3V3_S5", Some(VoltageRail::V3V3)),
+            ("+1V8", Some(VoltageRail::V1V8)),
+            ("1.8V", Some(VoltageRail::V1V8)),
+            ("VCC1V8", Some(VoltageRail::V1V8)),
+            ("+1V8_S0", Some(VoltageRail::V1V8)),
+            ("+1V", Some(VoltageRail::V1)),
+            ("1V0", Some(VoltageRail::V1)),
+            ("1.0V", Some(VoltageRail::V1)),
+            ("1V05", Some(VoltageRail::V1)),
+            ("PP1V0", Some(VoltageRail::V1)),
+            ("GND", None),
+            ("+1V2", None),
+            ("+2V5", None),
+            ("+5V5", None),
+            ("+11V", None),
+            ("+21V", None),
+        ];
+
+        for (net, expected) in cases {
+            assert_eq!(classify_net_voltage(net), expected, "net: {net}");
+        }
+    }
+
+    #[test]
+    fn falls_back_to_pin_side_color() {
+        assert_eq!(pin_color("+3V3", Side::Top), VOLT_3V3);
+        assert_eq!(pin_color("+1V8", Side::Bottom), VOLT_1V8);
+        assert_eq!(pin_color("GND", Side::Top), PIN_TOP);
+        assert_eq!(pin_color("", Side::Bottom), PIN_BOTTOM);
+        assert_eq!(pin_color("SIGNAL", Side::Both), PIN_BOTH);
+    }
 }

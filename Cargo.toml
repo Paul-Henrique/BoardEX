@@ -1,0 +1,22 @@
+[package]
+name = "boardex"
+version = "0.1.0"
+edition = "2024"
+description = "BoardEX - visualizador de boardview limpo, rápido e multiplataforma"
+license = "MIT"
+default-run = "BoardEX"
+
+[[bin]]
+name = "BoardEX"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.37.0", default-features = false, features = ["wgpu", "default_fonts"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+rfd = "0.18.0"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

@@ -19,6 +19,7 @@ Repositório: <https://github.com/Paul-Henrique/BoardEX>
 - Seleção de componente, pino e nail; destaque de todos os pinos/nails da net selecionada.
 - Busca por nome de componente, número/nome de pino e net.
 - Painel de detalhes com valores, fabricante, contagem de pinos e avisos de parse.
+- Setas de fluxo de energia nos pads do componente selecionado, coloridas pela tensão.
 - Drag-and-drop de arquivos ou pastas na janela.
 - Diálogo **Chave FZ…** para colar a chave RC6 ou carregar um arquivo `obv.conf`/texto; abre automaticamente quando um `.fz` cifrado precisa de chave e permite tentar novamente sem reiniciar.
 - Tema escuro e renderização por GPU.
@@ -82,11 +83,30 @@ São reconhecidos formatos como `+12V`, `12V0`, `+5V`, `5V0`, `+3V3`, `3.3V`, `+
 
 ### Dados do componente
 
-![BoardEX com o componente J1 selecionado, painel de dados e net +12V destacada em verde escuro](docs/screenshot-component.png)
+![BoardEX com o CI U1 selecionado, painel de dados, setas de fluxo de energia e net +12V destacada em verde escuro](docs/screenshot-component.png)
 
 Ao clicar em um componente, o painel mostra o tipo inferido pelo designador — capacitor, resistor, indutor/bobina, transistor/MOSFET, diodo/LED, chip/CI, cristal/oscilador, fusível, bateria, conector, chave, jumper, relé e outros — além da montagem, lado, dimensões, quantidade de pinos, valor, código do fabricante e nets conectadas.
 
 A classificação é heurística, baseada em prefixos como `C`, `R`, `L`, `Q`, `D`, `U`, `Y`, `F`, `BT`, `J` e `SW`, e em nomes descritivos. O tipo exato de um transistor, por exemplo, depende do valor/código do componente quando o arquivo não o informa.
+
+### Fluxo de energia
+
+Com um componente selecionado e os pinos visíveis (`P`), o BoardEX desenha uma pequena seta em cada pad ligado a uma tensão reconhecida:
+
+- **Seta apontando para o pad**: o componente **recebe** energia por aquele pino.
+- **Seta saindo do pad**: o componente **fornece** energia por aquele pino.
+- A cor da seta é a mesma da tensão: amarelo (12–20 V), vermelho (5 V), roxo (3,3 V), azul (1,8 V) e branco (1 V).
+
+O painel **Componente selecionado** também mostra `Energia: recebe`, `fornece` ou `recebe e fornece`, com a direção por rail.
+
+A direção é **inferida por heurística**, porque arquivos de boardview normalmente não armazenam a direção elétrica:
+
+- Conectores e baterias são tratados como fontes e suas setas saem dos pads.
+- Fusíveis, chaves, relés e jumpers são tratados como passagem de energia; nomes de pino como `VIN`/`VOUT` podem indicar a entrada e a saída.
+- CIs comuns recebem energia. CIs identificados como fonte — `PMIC`, `POWER`, `PWR`, `REG`, `LDO`, `BUCK`, `BOOST`, `CONVERTER`, `CHARGER`, `VRM`, `DC-DC` — usam o rail de maior tensão como entrada e os rails menores como saídas. Um CI com rail de 12–20 V e rails menores também é tratado como provável regulador.
+- Nomes de pino como `VIN`, `VCC`, `VDD`, `VBAT` e `VSYS` indicam recebimento; `VOUT`, `VCORE`, `VDD_CPU` e `VCC_IO` podem indicar fornecimento em CIs de fonte.
+
+Essa inferência não substitui o datasheet e pode errar em componentes com topologia incomum ou sem nomes de pino. O objetivo é dar uma pista visual rápida durante a inspeção.
 
 ### Limitações conhecidas
 
@@ -184,7 +204,7 @@ Os testes cobrem tokenização, decodificação CP1252, codec BDV, formatos BRD/
 | Mostrar/ocultar nomes | `N` |
 | Mostrar/ocultar pinos | `P` |
 
-Ao selecionar um pino ou nail, a net dele é destacada em amarelo em toda a placa. O painel lateral permite enquadrar o componente, a net ou o pino.
+Ao selecionar um pino ou nail, a net dele é destacada em verde escuro em toda a placa. O painel lateral permite enquadrar o componente, a net ou o pino.
 
 ## Próximos passos sugeridos
 

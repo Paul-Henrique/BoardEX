@@ -9,7 +9,7 @@ use eframe::egui::{
 };
 
 use crate::formats;
-use crate::model::{BBox, Board, FileFormat, Pin, Pt, Side};
+use crate::model::{BBox, Board, FileFormat, Part, Pin, Pt, Side};
 
 const BG: Color32 = Color32::from_rgb(9, 12, 16);
 const BOARD_FILL: Color32 = Color32::from_rgb(23, 30, 38);
@@ -78,6 +78,16 @@ impl VoltageRail {
             Self::V3V3 => "3,3 V",
             Self::V1V8 => "1,8 V",
             Self::V1 => "1 V",
+        }
+    }
+
+    fn nominal_voltage(self) -> f32 {
+        match self {
+            Self::V12to20 => 12.0,
+            Self::V5 => 5.0,
+            Self::V3V3 => 3.3,
+            Self::V1V8 => 1.8,
+            Self::V1 => 1.0,
         }
     }
 }
@@ -315,6 +325,222 @@ fn classify_component(name: &str) -> ComponentType {
     }
 
     ComponentType::Other
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PowerDirection {
+    Receives,
+    Supplies,
+}
+
+impl PowerDirection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Receives => "recebe",
+            Self::Supplies => "fornece",
+        }
+    }
+}
+
+fn pin_name_direction(name: &str, power_ic: bool) -> Option<PowerDirection> {
+    let name = name.to_ascii_uppercase();
+    if name.is_empty() {
+        return None;
+    }
+
+    let output_keywords: &[&str] = if power_ic {
+        &[
+            "VOUT", "VREG_OUT", "PWR_OUT", "VOUT_", "VCORE", "VCC_CORE", "VDD_CORE", "VDD_CPU",
+            "VCC_CPU", "VCC_IO", "VDD_IO", "VCCIO", "VDDIO", "VDDQ", "VDD_SOC", "VCC_SOC",
+            "VDD_GFX", "VCC_GFX",
+        ]
+    } else {
+        &["VOUT", "VREG_OUT", "PWR_OUT", "VOUT_"]
+    };
+    if output_keywords.iter().any(|keyword| name.contains(keyword)) {
+        return Some(PowerDirection::Supplies);
+    }
+
+    let input_keywords = [
+        "VIN", "VCC", "VDD", "VBAT", "VSYS", "PVIN", "AVIN", "DVIN", "VREG_IN", "PWR_IN", "DC_IN",
+        "VINP", "VINN", "VDDIO", "VCCIO",
+    ];
+    if input_keywords.iter().any(|keyword| name.contains(keyword)) {
+        return Some(PowerDirection::Receives);
+    }
+
+    None
+}
+
+fn is_power_ic(part: &Part, power_rails: &[VoltageRail]) -> bool {
+    if classify_component(&part.name) != ComponentType::Ic {
+        return false;
+    }
+
+    let haystack = format!("{} {} {}", part.name, part.value, part.mfgcode).to_ascii_uppercase();
+    let keywords = [
+        "PMIC",
+        "POWER",
+        "PWR",
+        "REGULATOR",
+        "REG",
+        "LDO",
+        "BUCK",
+        "BOOST",
+        "CONVERTER",
+        "CHARGER",
+        "VRM",
+        "DC-DC",
+        "DCDC",
+        "SWITCHER",
+        "SUPPLY",
+    ];
+    if keywords.iter().any(|keyword| haystack.contains(keyword)) {
+        return true;
+    }
+
+    // Uma entrada de 12 V/20 V junto com raízes menores é uma pista forte
+    // de regulador/PMIC mesmo quando o nome do CI não traz "PMIC".
+    power_rails.len() >= 2
+        && power_rails
+            .iter()
+            .any(|rail| rail.nominal_voltage() >= 12.0)
+}
+
+fn part_power_rails(part: &Part, board: &Board) -> Vec<VoltageRail> {
+    let mut rails = Vec::new();
+    for pin_idx in &part.pins {
+        let Some(pin) = board.pins.get(*pin_idx) else {
+            continue;
+        };
+        if let Some(rail) = classify_net_voltage(&pin.net)
+            && !rails.contains(&rail)
+        {
+            rails.push(rail);
+        }
+    }
+    rails
+}
+
+fn power_direction_for_pin(
+    part: &Part,
+    pin: &Pin,
+    power_rails: &[VoltageRail],
+    power_ic: bool,
+) -> Option<PowerDirection> {
+    let rail = classify_net_voltage(&pin.net)?;
+    let component = classify_component(&part.name);
+
+    // Conectores e baterias entregam energia ao restante da placa.
+    if matches!(component, ComponentType::Battery | ComponentType::Connector) {
+        return Some(PowerDirection::Supplies);
+    }
+
+    // Nomes de pino são relativos ao componente e ajudam principalmente em CIs
+    // e em dispositivos de passagem (fusível, chave, relé, jumper).
+    if matches!(
+        component,
+        ComponentType::Ic
+            | ComponentType::Other
+            | ComponentType::Fuse
+            | ComponentType::Switch
+            | ComponentType::Relay
+            | ComponentType::Jumper
+    ) && let Some(direction) = pin_name_direction(&pin.name, power_ic)
+    {
+        return Some(direction);
+    }
+
+    match component {
+        ComponentType::Fuse
+        | ComponentType::Switch
+        | ComponentType::Relay
+        | ComponentType::Jumper => Some(PowerDirection::Supplies),
+        ComponentType::Ic => {
+            if !power_ic {
+                return Some(PowerDirection::Receives);
+            }
+            if power_rails.len() > 1 {
+                let highest = power_rails
+                    .iter()
+                    .copied()
+                    .max_by(|a, b| a.nominal_voltage().total_cmp(&b.nominal_voltage()));
+                if highest == Some(rail) {
+                    Some(PowerDirection::Receives)
+                } else {
+                    Some(PowerDirection::Supplies)
+                }
+            } else if rail.nominal_voltage() >= 5.0 {
+                Some(PowerDirection::Receives)
+            } else {
+                Some(PowerDirection::Supplies)
+            }
+        }
+        _ => Some(PowerDirection::Receives),
+    }
+}
+
+fn part_power_flows(part: &Part, board: &Board) -> Vec<(VoltageRail, PowerDirection)> {
+    let power_rails = part_power_rails(part, board);
+    let power_ic = is_power_ic(part, &power_rails);
+    let mut flows: Vec<(VoltageRail, PowerDirection)> = Vec::new();
+
+    for pin_idx in &part.pins {
+        let Some(pin) = board.pins.get(*pin_idx) else {
+            continue;
+        };
+        let Some(rail) = classify_net_voltage(&pin.net) else {
+            continue;
+        };
+        let Some(direction) = power_direction_for_pin(part, pin, &power_rails, power_ic) else {
+            continue;
+        };
+        if !flows.contains(&(rail, direction)) {
+            flows.push((rail, direction));
+        }
+    }
+
+    flows.sort_by(|a, b| b.0.nominal_voltage().total_cmp(&a.0.nominal_voltage()));
+    flows
+}
+
+fn draw_power_arrow(
+    painter: &egui::Painter,
+    pad: Pos2,
+    outward: Vec2,
+    direction: PowerDirection,
+    color: Color32,
+    radius: f32,
+) {
+    let dir = if outward.length_sq() > 0.001 {
+        outward.normalized()
+    } else {
+        Vec2::new(1.0, 0.0)
+    };
+    let gap = radius + 4.0;
+    let length = (radius * 1.35).clamp(8.0, 13.0);
+    let (tail, tip) = match direction {
+        PowerDirection::Receives => (pad + dir * (gap + length), pad + dir * gap),
+        PowerDirection::Supplies => (pad + dir * gap, pad + dir * (gap + length)),
+    };
+
+    let back = (tail - tip).normalized();
+    let side = Vec2::new(-back.y, back.x);
+    let head = 3.2;
+    let half_width = 2.4;
+    let base = tip + back * head;
+    let segments = [
+        (tail, tip),
+        (tip, base + side * half_width),
+        (tip, base - side * half_width),
+    ];
+
+    for (a, b) in segments {
+        painter.line_segment([a, b], Stroke::new(3.4, Color32::from_rgb(9, 12, 16)));
+    }
+    for (a, b) in segments {
+        painter.line_segment([a, b], Stroke::new(1.6, color));
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -995,6 +1221,47 @@ impl BoardExApp {
                 }
             }
         }
+
+        if self.show_pins
+            && let Some(part_idx) = self.selected_part
+            && let Some(part) = board.parts.get(part_idx)
+        {
+            let power_rails = part_power_rails(part, board);
+            let power_ic = is_power_ic(part, &power_rails);
+            let center_board = if part.bounds.is_empty() {
+                part.pins
+                    .first()
+                    .and_then(|pin_idx| board.pins.get(*pin_idx))
+                    .map(|pin| pin.pos)
+                    .unwrap_or(part.p1)
+            } else {
+                part.bounds.center()
+            };
+            let center = self.to_screen(board, center_board);
+
+            for pin_idx in &part.pins {
+                let Some(pin) = board.pins.get(*pin_idx) else {
+                    continue;
+                };
+                if !board.visible_pin(pin, side) || !view.contains(pin.pos) {
+                    continue;
+                }
+                let Some(rail) = classify_net_voltage(&pin.net) else {
+                    continue;
+                };
+                let Some(direction) = power_direction_for_pin(part, pin, &power_rails, power_ic)
+                else {
+                    continue;
+                };
+                let sp = self.to_screen(board, pin.pos);
+                let mut outward = sp - center;
+                if outward.length_sq() < 0.01 {
+                    outward = Vec2::new(1.0, 0.0);
+                }
+                let radius = (pin.radius * scale).clamp(2.3, 10.0);
+                draw_power_arrow(painter, sp, outward, direction, rail.color(), radius);
+            }
+        }
     }
 
     fn view(&mut self, ui: &mut egui::Ui) {
@@ -1438,6 +1705,44 @@ impl BoardExApp {
                     ui.label(text).on_hover_text(nets.join("\n"));
                 }
 
+                let power_flows = part_power_flows(part, board);
+                if !power_flows.is_empty() {
+                    ui.add_space(2.0);
+                    let overall = if power_flows
+                        .iter()
+                        .all(|(_, direction)| *direction == PowerDirection::Receives)
+                    {
+                        "recebe"
+                    } else if power_flows
+                        .iter()
+                        .all(|(_, direction)| *direction == PowerDirection::Supplies)
+                    {
+                        "fornece"
+                    } else {
+                        "recebe e fornece"
+                    };
+                    ui.label(egui::RichText::new(format!("Energia: {overall}")).strong());
+                    for (rail, direction) in power_flows {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(rail.label())
+                                    .color(rail.color())
+                                    .strong(),
+                            );
+                            ui.label(
+                                egui::RichText::new(format!("· {}", direction.label()))
+                                    .color(MUTED)
+                                    .small(),
+                            );
+                        });
+                    }
+                    ui.label(
+                        egui::RichText::new("Setas para o pad: recebe · setas saindo: fornece")
+                            .color(MUTED)
+                            .small(),
+                    );
+                }
+
                 if ui.button("Enquadrar componente").clicked() {
                     go_to = Some(part.bounds);
                 }
@@ -1725,5 +2030,118 @@ mod tests {
         for (name, expected) in cases {
             assert_eq!(classify_component(name), expected, "componente: {name}");
         }
+    }
+
+    fn board_with_part(name: &str, value: &str, pins: &[(&str, &str)]) -> Board {
+        let mut board = Board::new("test", FileFormat::Brd2);
+        let mut part = Part::new(name.to_string());
+        part.value = value.to_string();
+        part.p1 = Pt::new(0.0, 0.0);
+        part.p2 = Pt::new(100.0, 50.0);
+
+        for (index, (net, pin_name)) in pins.iter().enumerate() {
+            let mut pin = Pin::new(Pt::new(10.0 + index as f32 * 10.0, 25.0));
+            pin.net = net.to_string();
+            pin.name = pin_name.to_string();
+            pin.part = Some(0);
+            board.pins.push(pin);
+        }
+
+        board.parts.push(part);
+        board.finalize();
+        board
+    }
+
+    #[test]
+    fn classifies_power_pin_names() {
+        assert_eq!(
+            pin_name_direction("VIN", false),
+            Some(PowerDirection::Receives)
+        );
+        assert_eq!(
+            pin_name_direction("VOUT", false),
+            Some(PowerDirection::Supplies)
+        );
+        assert_eq!(
+            pin_name_direction("VCC_IO", false),
+            Some(PowerDirection::Receives)
+        );
+        assert_eq!(
+            pin_name_direction("VCC_IO", true),
+            Some(PowerDirection::Supplies)
+        );
+        assert_eq!(pin_name_direction("VCORE", false), None);
+        assert_eq!(
+            pin_name_direction("VCORE", true),
+            Some(PowerDirection::Supplies)
+        );
+        assert_eq!(pin_name_direction("GND", true), None);
+    }
+
+    #[test]
+    fn infers_power_flow_for_components() {
+        let board = board_with_part(
+            "U1",
+            "PMIC",
+            &[("+12V", "VIN"), ("+5V", ""), ("+3V3", "VOUT"), ("+1V8", "")],
+        );
+        assert_eq!(
+            part_power_flows(&board.parts[0], &board),
+            vec![
+                (VoltageRail::V12to20, PowerDirection::Receives),
+                (VoltageRail::V5, PowerDirection::Supplies),
+                (VoltageRail::V3V3, PowerDirection::Supplies),
+                (VoltageRail::V1V8, PowerDirection::Supplies),
+            ]
+        );
+
+        let board = board_with_part("U2", "", &[("+3V3", "VCC"), ("+1V8", "VDD")]);
+        assert_eq!(
+            part_power_flows(&board.parts[0], &board),
+            vec![
+                (VoltageRail::V3V3, PowerDirection::Receives),
+                (VoltageRail::V1V8, PowerDirection::Receives),
+            ]
+        );
+
+        let board = board_with_part("U3", "", &[("+12V", ""), ("+5V", "")]);
+        let rails = part_power_rails(&board.parts[0], &board);
+        assert!(is_power_ic(&board.parts[0], &rails));
+        assert_eq!(
+            part_power_flows(&board.parts[0], &board),
+            vec![
+                (VoltageRail::V12to20, PowerDirection::Receives),
+                (VoltageRail::V5, PowerDirection::Supplies),
+            ]
+        );
+
+        let board = board_with_part("U4", "LDO", &[("+3V3", "")]);
+        assert_eq!(
+            part_power_flows(&board.parts[0], &board),
+            vec![(VoltageRail::V3V3, PowerDirection::Supplies)]
+        );
+
+        let board = board_with_part("J1", "", &[("+5V", "")]);
+        assert_eq!(
+            part_power_flows(&board.parts[0], &board),
+            vec![(VoltageRail::V5, PowerDirection::Supplies)]
+        );
+
+        let board = board_with_part("BT1", "", &[("+12V", "")]);
+        assert_eq!(
+            part_power_flows(&board.parts[0], &board),
+            vec![(VoltageRail::V12to20, PowerDirection::Supplies)]
+        );
+
+        let board = board_with_part("R1", "", &[("+3V3", "")]);
+        assert_eq!(
+            part_power_flows(&board.parts[0], &board),
+            vec![(VoltageRail::V3V3, PowerDirection::Receives)]
+        );
+
+        let board = board_with_part("F1", "", &[("+12V", "VIN"), ("+12V", "VOUT")]);
+        let flows = part_power_flows(&board.parts[0], &board);
+        assert!(flows.contains(&(VoltageRail::V12to20, PowerDirection::Receives)));
+        assert!(flows.contains(&(VoltageRail::V12to20, PowerDirection::Supplies)));
     }
 }

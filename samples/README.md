@@ -5,7 +5,7 @@ Estes arquivos são **fictícios**, criados apenas para desenvolvimento e testes
 | Arquivo | Formato exercitado |
 |---|---|
 | `demo.brd2` | BRD2 completo, com componentes top/bottom, pinos e nails |
-| `demo_power.brd2` | BRD2 com nets de 12 V, 5 V, 3,3 V, 1,8 V e 1 V para visualizar as cores por tensão |
+| `demo_power.brd2` | BRD2 com nets de 12 V, 5 V, 3,3 V, 1,8 V e 1 V e o CI `U1` para visualizar cores por tensão e setas de fluxo de energia |
 | `demo.brd` | BRD com cabeçalho comprimido/ofuscado |
 | `demo.bvr` | BVR `BVRAW_FORMAT_1` com layout separado por vírgulas |
 | `demo.bvr3` | BVR3 com contorno e pinos por origem relativa |
